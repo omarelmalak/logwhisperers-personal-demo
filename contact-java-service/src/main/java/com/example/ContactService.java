@@ -91,11 +91,25 @@ public class ContactService {
 
     public List<JsonNode> getLineItemsForDeal(List<String> lineItemIds) throws Exception {
         List<JsonNode> results = new ArrayList<>();
-        for (String id : lineItemIds) {
+
+        if (lineItemIds.isEmpty()) {
+            return results;
+        }
+
+        for (int i = 0; i < lineItemIds.size(); i += 100) {
+            List<String> batchIds = lineItemIds.subList(i, Math.min(i + 100, lineItemIds.size()));
+
+            ObjectNode body = mapper.createObjectNode();
+            ArrayNode inputs = body.putArray("inputs");
+            for (String id : batchIds) {
+                inputs.addObject().put("id", id);
+            }
+
             HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(LINE_ITEMS_URL + "/" + id))
+                    .uri(URI.create(LINE_ITEMS_URL + "/batch/read"))
+                    .header("Content-Type", "application/json")
                     .header("Authorization", "Bearer " + API_KEY)
-                    .GET()
+                    .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)))
                     .build();
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
@@ -106,8 +120,11 @@ public class ContactService {
                         result.path("message").asText(response.body()));
             }
 
-            results.add(result);
+            for (JsonNode item : result.path("results")) {
+                results.add(item);
+            }
         }
+
         return results;
     }
 
@@ -124,7 +141,7 @@ public class ContactService {
 
         if (args.length > 0 && args[0].equals("line-items")) {
             List<String> ids = List.of(args).subList(1, args.length);
-            System.out.println("Fetching " + ids.size() + " line items one by one...");
+            System.out.println("Fetching " + ids.size() + " line items in batches...");
             List<JsonNode> items = service.getLineItemsForDeal(ids);
             for (JsonNode item : items) {
                 System.out.println(item.toPrettyString());
