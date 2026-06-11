@@ -12,12 +12,15 @@ interface ContactForm {
 
 type Status = { type: 'idle' } | { type: 'loading' } | { type: 'success'; id: string } | { type: 'error'; message: string };
 type LookupStatus = { type: 'idle' } | { type: 'loading' } | { type: 'success'; contact: Record<string, unknown> } | { type: 'error'; message: string };
+type LineItemsStatus = { type: 'idle' } | { type: 'loading' } | { type: 'success'; items: Record<string, unknown>[] } | { type: 'error'; message: string };
 
 export default function App() {
   const [form, setForm] = useState<ContactForm>({ firstname: '', lastname: '', email: '', phone: '' });
   const [status, setStatus] = useState<Status>({ type: 'idle' });
   const [lookupId, setLookupId] = useState('');
   const [lookupStatus, setLookupStatus] = useState<LookupStatus>({ type: 'idle' });
+  const [lineItemIds, setLineItemIds] = useState('');
+  const [lineItemsStatus, setLineItemsStatus] = useState<LineItemsStatus>({ type: 'idle' });
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setForm(prev => ({ ...prev, [e.target.name]: e.target.value }));
@@ -80,6 +83,34 @@ export default function App() {
     }
   };
 
+  const handleLineItemsLookup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const ids = lineItemIds.split(',').map(s => s.trim()).filter(Boolean);
+    if (ids.length === 0) return;
+    setLineItemsStatus({ type: 'loading' });
+
+    try {
+      const items: Record<string, unknown>[] = [];
+      for (const id of ids) {
+        const res = await fetch(`/api/hubspot/crm/v3/objects/line_items/${encodeURIComponent(id)}`, {
+          headers: { Authorization: `Bearer ${API_KEY}` },
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          setLineItemsStatus({ type: 'error', message: `Line item ${id}: ${data.message ?? `HTTP ${res.status}`}` });
+          return;
+        }
+
+        items.push(data);
+      }
+      setLineItemsStatus({ type: 'success', items });
+    } catch (err) {
+      setLineItemsStatus({ type: 'error', message: err instanceof Error ? err.message : 'Unknown error' });
+    }
+  };
+
   return (
     <div style={styles.page}>
       <div style={styles.col}>
@@ -138,6 +169,34 @@ export default function App() {
           )}
           {lookupStatus.type === 'error' && (
             <p style={styles.error}>Error: {lookupStatus.message}</p>
+          )}
+        </div>
+
+        <div style={styles.card}>
+          <h2 style={styles.title}>Get Deal Line Items</h2>
+
+          <form onSubmit={handleLineItemsLookup} style={styles.form}>
+            <label style={styles.label}>Line Item IDs (comma-separated)
+              <input
+                value={lineItemIds}
+                onChange={e => setLineItemIds(e.target.value)}
+                placeholder="e.g. 101, 102, 103"
+                style={styles.input}
+              />
+            </label>
+            <button type="submit" disabled={lineItemsStatus.type === 'loading'} style={{ ...styles.button, background: '#516f90' }}>
+              {lineItemsStatus.type === 'loading' ? 'Fetching...' : 'Get Line Items'}
+            </button>
+          </form>
+
+          {lineItemsStatus.type === 'success' && (
+            <div style={styles.result}>
+              <p style={styles.success}>Found {lineItemsStatus.items.length} line items</p>
+              <pre style={styles.pre}>{JSON.stringify(lineItemsStatus.items, null, 2)}</pre>
+            </div>
+          )}
+          {lineItemsStatus.type === 'error' && (
+            <p style={styles.error}>Error: {lineItemsStatus.message}</p>
           )}
         </div>
       </div>
