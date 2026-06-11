@@ -14,6 +14,20 @@ type Status = { type: 'idle' } | { type: 'loading' } | { type: 'success'; id: st
 type LookupStatus = { type: 'idle' } | { type: 'loading' } | { type: 'success'; contact: Record<string, unknown> } | { type: 'error'; message: string };
 type LineItemsStatus = { type: 'idle' } | { type: 'loading' } | { type: 'success'; items: Record<string, unknown>[] } | { type: 'error'; message: string };
 
+const BATCH_SIZE = 100;
+const MAX_RETRIES = 3;
+
+async function fetchWithRetry(url: string, options: RequestInit, attempt = 0): Promise<Response> {
+  const res = await fetch(url, options);
+  if (res.status === 429 && attempt < MAX_RETRIES) {
+    const retryAfter = res.headers.get('Retry-After');
+    const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : Math.pow(2, attempt) * 1000;
+    await new Promise(resolve => setTimeout(resolve, delay));
+    return fetchWithRetry(url, options, attempt + 1);
+  }
+  return res;
+}
+
 export default function App() {
   const [form, setForm] = useState<ContactForm>({ firstname: '', lastname: '', email: '', phone: '' });
   const [status, setStatus] = useState<Status>({ type: 'idle' });
@@ -90,22 +104,37 @@ export default function App() {
     setLineItemsStatus({ type: 'loading' });
 
     try {
-      const items: Record<string, unknown>[] = [];
-      for (const id of ids) {
-        const res = await fetch(`/api/hubspot/crm/v3/objects/line_items/${encodeURIComponent(id)}`, {
-          headers: { Authorization: `Bearer ${API_KEY}` },
-        });
+      const allItems: Record<string, unknown>[] = [];
+
+      // Use batch read endpoint instead of individual GETs (fixes N+1 / 429 rate limiting)
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = ids.slice(i, i + BATCH_SIZE);
+        const res = await fetchWithRetry(
+          '/api/hubspot/crm/v3/objects/line_items/batch/read',
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${API_KEY}`,
+            },
+            body: JSON.stringify({
+              inputs: batch.map(id => ({ id })),
+              properties: ['name', 'quantity', 'price', 'amount', 'hs_product_id'],
+            }),
+          }
+        );
 
         const data = await res.json();
 
         if (!res.ok) {
-          setLineItemsStatus({ type: 'error', message: `Line item ${id}: ${data.message ?? `HTTP ${res.status}`}` });
+          setLineItemsStatus({ type: 'error', message: data.message ?? `HTTP ${res.status}` });
           return;
         }
 
-        items.push(data);
+        allItems.push(...(data.results ?? []));
       }
-      setLineItemsStatus({ type: 'success', items });
+
+      setLineItemsStatus({ type: 'success', items: allItems });
     } catch (err) {
       setLineItemsStatus({ type: 'error', message: err instanceof Error ? err.message : 'Unknown error' });
     }
