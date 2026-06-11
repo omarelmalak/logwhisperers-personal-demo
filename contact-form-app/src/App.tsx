@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 const API_KEY = import.meta.env.VITE_HUBSPOT_API_KEY ?? '';
 const APP_ID = 39193691;
+const BATCH_SIZE = 100;
 
 interface ContactForm {
   firstname: string;
@@ -90,22 +91,35 @@ export default function App() {
     setLineItemsStatus({ type: 'loading' });
 
     try {
-      const items: Record<string, unknown>[] = [];
-      for (const id of ids) {
-        const res = await fetch(`/api/hubspot/crm/v3/objects/line_items/${encodeURIComponent(id)}`, {
-          headers: { Authorization: `Bearer ${API_KEY}` },
+      // Use batch read endpoint instead of individual GETs to avoid N+1 rate limiting.
+      // HubSpot batch/read accepts up to 100 IDs per request.
+      const allItems: Record<string, unknown>[] = [];
+
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const chunk = ids.slice(i, i + BATCH_SIZE);
+        const res = await fetch('/api/hubspot/crm/v3/objects/line_items/batch/read', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${API_KEY}`,
+          },
+          body: JSON.stringify({
+            inputs: chunk.map(id => ({ id })),
+            properties: ['name', 'quantity', 'price', 'amount', 'hs_product_id'],
+          }),
         });
 
         const data = await res.json();
 
         if (!res.ok) {
-          setLineItemsStatus({ type: 'error', message: `Line item ${id}: ${data.message ?? `HTTP ${res.status}`}` });
+          setLineItemsStatus({ type: 'error', message: data.message ?? `HTTP ${res.status}` });
           return;
         }
 
-        items.push(data);
+        allItems.push(...(data.results ?? []));
       }
-      setLineItemsStatus({ type: 'success', items });
+
+      setLineItemsStatus({ type: 'success', items: allItems });
     } catch (err) {
       setLineItemsStatus({ type: 'error', message: err instanceof Error ? err.message : 'Unknown error' });
     }
