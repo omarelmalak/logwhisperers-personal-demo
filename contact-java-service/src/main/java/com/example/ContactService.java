@@ -9,6 +9,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -17,6 +18,7 @@ public class ContactService {
     private static final String API_KEY = System.getenv("HUBSPOT_API_KEY");
     private static final int APP_ID = 39193691;
     private static final String CONTACTS_URL = "https://api.hubapi.com/crm/v3/objects/contacts";
+    private static final String LINE_ITEMS_URL = "https://api.hubapi.com/crm/v3/objects/line_items";
 
     private final HttpClient httpClient = HttpClient.newHttpClient();
     private final ObjectMapper mapper = new ObjectMapper();
@@ -87,6 +89,28 @@ public class ContactService {
         return result;
     }
 
+    public List<JsonNode> getLineItemsForDeal(List<String> lineItemIds) throws Exception {
+        List<JsonNode> results = new ArrayList<>();
+        for (String id : lineItemIds) {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(LINE_ITEMS_URL + "/" + id))
+                    .header("Authorization", "Bearer " + API_KEY)
+                    .GET()
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            JsonNode result = mapper.readTree(response.body());
+
+            if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                throw new RuntimeException("HubSpot API error " + response.statusCode() + ": " +
+                        result.path("message").asText(response.body()));
+            }
+
+            results.add(result);
+        }
+        return results;
+    }
+
     public static void main(String[] args) throws Exception {
         ContactService service = new ContactService();
 
@@ -95,6 +119,16 @@ public class ContactService {
             System.out.println("Fetching contact " + id + "...");
             JsonNode contact = service.getContact(id);
             System.out.println(contact.toPrettyString());
+            return;
+        }
+
+        if (args.length > 0 && args[0].equals("line-items")) {
+            List<String> ids = List.of(args).subList(1, args.length);
+            System.out.println("Fetching " + ids.size() + " line items one by one...");
+            List<JsonNode> items = service.getLineItemsForDeal(ids);
+            for (JsonNode item : items) {
+                System.out.println(item.toPrettyString());
+            }
             return;
         }
 
