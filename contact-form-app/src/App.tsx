@@ -14,6 +14,8 @@ type Status = { type: 'idle' } | { type: 'loading' } | { type: 'success'; id: st
 type LookupStatus = { type: 'idle' } | { type: 'loading' } | { type: 'success'; contact: Record<string, unknown> } | { type: 'error'; message: string };
 type LineItemsStatus = { type: 'idle' } | { type: 'loading' } | { type: 'success'; items: Record<string, unknown>[] } | { type: 'error'; message: string };
 
+const BATCH_SIZE = 100;
+
 export default function App() {
   const [form, setForm] = useState<ContactForm>({ firstname: '', lastname: '', email: '', phone: '' });
   const [status, setStatus] = useState<Status>({ type: 'idle' });
@@ -90,22 +92,34 @@ export default function App() {
     setLineItemsStatus({ type: 'loading' });
 
     try {
-      const items: Record<string, unknown>[] = [];
-      for (const id of ids) {
-        const res = await fetch(`/api/hubspot/crm/v3/objects/line_items/${encodeURIComponent(id)}`, {
-          headers: { Authorization: `Bearer ${API_KEY}` },
+      const allItems: Record<string, unknown>[] = [];
+
+      // Batch read: fetch up to 100 line items per request instead of one-by-one
+      for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        const batch = ids.slice(i, i + BATCH_SIZE);
+        const res = await fetch('/api/hubspot/crm/v3/objects/line_items/batch/read', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${API_KEY}`,
+          },
+          body: JSON.stringify({
+            properties: ['name', 'quantity', 'price', 'amount', 'hs_product_id'],
+            inputs: batch.map(id => ({ id })),
+          }),
         });
 
         const data = await res.json();
 
         if (!res.ok) {
-          setLineItemsStatus({ type: 'error', message: `Line item ${id}: ${data.message ?? `HTTP ${res.status}`}` });
+          setLineItemsStatus({ type: 'error', message: data.message ?? `HTTP ${res.status}` });
           return;
         }
 
-        items.push(data);
+        allItems.push(...(data.results ?? []));
       }
-      setLineItemsStatus({ type: 'success', items });
+
+      setLineItemsStatus({ type: 'success', items: allItems });
     } catch (err) {
       setLineItemsStatus({ type: 'error', message: err instanceof Error ? err.message : 'Unknown error' });
     }
