@@ -90,24 +90,39 @@ public class ContactService {
     }
 
     public List<JsonNode> getLineItemsForDeal(List<String> lineItemIds) throws Exception {
-        List<JsonNode> results = new ArrayList<>();
-        for (String id : lineItemIds) {
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(LINE_ITEMS_URL + "/" + id))
-                    .header("Authorization", "Bearer " + API_KEY)
-                    .GET()
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            JsonNode result = mapper.readTree(response.body());
-
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new RuntimeException("HubSpot API error " + response.statusCode() + ": " +
-                        result.path("message").asText(response.body()));
-            }
-
-            results.add(result);
+        if (lineItemIds.isEmpty()) {
+            return List.of();
         }
+
+        ObjectNode body = mapper.createObjectNode();
+        ArrayNode inputs = body.putArray("inputs");
+        for (String id : lineItemIds) {
+            inputs.addObject().put("id", id);
+        }
+
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(LINE_ITEMS_URL + "/batch/read"))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer " + API_KEY)
+                .POST(HttpRequest.BodyPublishers.ofString(mapper.writeValueAsString(body)))
+                .build();
+
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+        JsonNode result = mapper.readTree(response.body());
+
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new RuntimeException("HubSpot API error " + response.statusCode() + ": " +
+                    result.path("message").asText(response.body()));
+        }
+
+        List<JsonNode> results = new ArrayList<>();
+        JsonNode batchResults = result.path("results");
+        if (batchResults.isArray()) {
+            for (JsonNode item : batchResults) {
+                results.add(item);
+            }
+        }
+
         return results;
     }
 
@@ -124,7 +139,7 @@ public class ContactService {
 
         if (args.length > 0 && args[0].equals("line-items")) {
             List<String> ids = List.of(args).subList(1, args.length);
-            System.out.println("Fetching " + ids.size() + " line items one by one...");
+            System.out.println("Fetching " + ids.size() + " line items via batch read...");
             List<JsonNode> items = service.getLineItemsForDeal(ids);
             for (JsonNode item : items) {
                 System.out.println(item.toPrettyString());
